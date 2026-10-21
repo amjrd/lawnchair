@@ -16,19 +16,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// نموذج بيانات التطبيق
 data class AppItem(
     val name: String,
     val packageName: String
 )
 
-// نموذج بيانات البطاقة الكبيرة (الفئة)
 data class AppCategoryCard(
     val title: String,
     val apps: List<AppItem>
 )
 
-// مكون درج التطبيقات بتصميم بطاقات iOS الكبيرة
 @Composable
 fun IOSBigCardsDrawerView(
     categories: List<AppCategoryCard>,
@@ -41,7 +38,6 @@ fun IOSBigCardsDrawerView(
             .background(Color.Black.copy(alpha = 0.5f))
             .padding(16.dp)
     ) {
-        // شريط البحث بتصميم زجاجي آمن ومستقر
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -60,7 +56,6 @@ fun IOSBigCardsDrawerView(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // قائمة البطاقات الكبيرة الزجاجية
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.fillMaxSize()
@@ -72,7 +67,6 @@ fun IOSBigCardsDrawerView(
     }
 }
 
-// تصميم البطاقة الكبيرة الواحدة
 @Composable
 fun IOSBigCardItem(
     category: AppCategoryCard,
@@ -110,7 +104,6 @@ fun IOSBigCardItem(
     }
 }
 
-// عنصر الأيقونة الفردية داخل البطاقة
 @Composable
 fun AppTileItem(
     app: AppItem,
