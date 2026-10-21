@@ -41,7 +41,7 @@ fun NothingBatteryWidget(
 
     val isCharging = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            batteryManager.isCharging
+            batteryManager.isCharging()
         } else {
             false
         }
