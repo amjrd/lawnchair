@@ -1,7 +1,9 @@
 package app.lawnchair.compose.ui
 
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.BatteryManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -33,7 +35,11 @@ fun NothingBatteryWidget(
     val context = LocalContext.current
     val batteryStatus: Intent? = remember {
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        context.registerReceiver(null, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(null, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            context.registerReceiver(null, filter)
+        }
     }
 
     val batteryPct: Int = batteryStatus?.let { intent ->
