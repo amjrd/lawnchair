@@ -28,7 +28,7 @@ data class AppCategoryCard(
     val apps: List<AppItem>
 )
 
-// مكون درج التطبيقات بتصميم بطاقات iOS الكبيرة الرسمية
+// مكون درج التطبيقات بتصميم بطاقات iOS الكبيرة
 @Composable
 fun IOSBigCardsDrawerView(
     categories: List<AppCategoryCard>,
@@ -41,22 +41,22 @@ fun IOSBigCardsDrawerView(
             .background(Color.Black.copy(alpha = 0.5f))
             .padding(16.dp)
     ) {
-        // شريط البحث العلوي (App Library Search)
-        OutlinedTextField(
-            value = "",
-            onValueChange = {},
-            placeholder = { Text("App Library", color = Color.LightGray) },
+        // شريط البحث بتصميم زجاجي آمن ومستقر
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color.White.copy(alpha = 0.15f)),
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = Color.Transparent,
-                focusedBorderColor = Color.Transparent
-            ),
-            singleLine = true
-        )
+                .background(Color.White.copy(alpha = 0.15f))
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Text(
+                text = "App Library",
+                color = Color.LightGray,
+                fontSize = 14.sp
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
