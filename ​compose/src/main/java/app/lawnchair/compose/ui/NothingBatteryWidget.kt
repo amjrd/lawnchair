@@ -1,9 +1,6 @@
 package app.lawnchair.compose.ui
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.Build
 import android.os.BatteryManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -33,30 +30,17 @@ fun NothingBatteryWidget(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val batteryStatus: Intent? = remember {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(null, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(null, filter)
-        }
+    val batteryManager = remember {
+        context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
     }
 
-    val batteryPct: Int = batteryStatus?.let { intent ->
-        val level: Int = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-        val scale: Int = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-        if (level >= 0 && scale > 0) {
-            ((level / scale.toFloat()) * 100).toInt()
-        } else {
-            100
-        }
-    } ?: 100
+    val batteryPct = remember {
+        batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
 
-    val isCharging = batteryStatus?.let { intent ->
-        val status: Int = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-        status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL
-    } ?: false
+    val isCharging = remember {
+        batteryManager.isCharging
+    }
 
     Box(
         modifier = modifier
