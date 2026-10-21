@@ -1,4 +1,4 @@
-package com.lawnchair.compose.ui
+package app.lawnchair.compose.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
