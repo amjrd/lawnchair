@@ -11,7 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-importandroidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -33,7 +33,7 @@ fun IOSDockView(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(30.dp))
-            .background(Color.White.copy(alpha = 0.25f)) // تأثير الزجاج الشفاف (Frosted Glass)
+            .background(Color.White.copy(alpha = 0.25f))
             .padding(horizontal = 24.dp, vertical = 16.dp),
     ) {
         Row(
@@ -47,7 +47,7 @@ fun IOSDockView(
     }
 }
 
-// عنصر الأيقونة الفردية مع تأثير الضغط (Spring Animation)
+// عنصر الأيقونة الفردية مع تأثير الضغط
 @Composable
 fun DockAppItem(app: DockApp, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
