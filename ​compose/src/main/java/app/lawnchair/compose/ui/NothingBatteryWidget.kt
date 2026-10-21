@@ -39,7 +39,7 @@ fun NothingBatteryWidget(
     }
 
     val isCharging = remember {
-        batteryManager.isCharging
+        batteryManager.isCharging()
     }
 
     Box(
