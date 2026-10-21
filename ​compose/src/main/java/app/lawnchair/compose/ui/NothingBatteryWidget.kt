@@ -1,6 +1,7 @@
 package app.lawnchair.compose.ui
 
 import android.content.Context
+import android.os.Build
 import android.os.BatteryManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -39,7 +40,11 @@ fun NothingBatteryWidget(
     }
 
     val isCharging = remember {
-        batteryManager.isCharging()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            batteryManager.isCharging
+        } else {
+            false
+        }
     }
 
     Box(
