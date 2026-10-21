@@ -199,6 +199,30 @@
                 android:resource="@xml/smartspace_appwidget_info" />
         </receiver>
 
+        <!-- Nothing Clock Widget Provider -->
+        <receiver
+            android:name="app.lawnchair.compose.ui.NothingClockWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nothing_clock_widget_info" />
+        </receiver>
+
+        <!-- Nothing Battery Widget Provider -->
+        <receiver
+            android:name="app.lawnchair.compose.ui.NothingBatteryWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/nothing_battery_widget_info" />
+        </receiver>
+
         <meta-data
             android:name="xyz.paphonb.quickstepswitcher.minSdk"
             android:value="${quickstepMinSdk}" />
