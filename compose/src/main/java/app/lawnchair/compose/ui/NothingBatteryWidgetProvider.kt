@@ -1,15 +1,8 @@
 package app.lawnchair.compose.ui
 
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
-import android.content.Context
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetProvider
 
-class NothingBatteryWidgetProvider : AppWidgetProvider() {
-    override fun onUpdate(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray
-    ) {
-        super.onUpdate(context, appWidgetManager, appWidgetIds)
-    }
+class NothingBatteryWidgetProvider : GlanceAppWidgetProvider() {
+    override val glanceAppWidget: GlanceAppWidget? = null
 }
