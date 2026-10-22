@@ -2,26 +2,37 @@ name: CI
 
 on:
   push:
-    branches:
-      - '*-dev'
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build-variant: [ assembleDebug ]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: actions/setup-java@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v3
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
       - name: Build APK
-        run: ./gradlew assembleLawnWithQuickstepGithubDebug
-      - name: Upload artifact
+        run: ./gradlew ${{ matrix.build-variant }}
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk
+          name: apk-${{ matrix.build-variant }}
           path: build/outputs/apk/**/*.apk
