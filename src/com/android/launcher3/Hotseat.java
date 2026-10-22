@@ -12,20 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- * Modifications copyright 2025 Lawnchair
  */
 
 package com.android.launcher3;
 
-import static android.view.View.MeasureSpec.makeMeasureSpec;
-
 import static com.android.launcher3.LauncherAnimUtils.VIEW_TRANSLATE_X;
 import static com.android.launcher3.util.MultiTranslateDelegate.INDEX_BUBBLE_ADJUSTMENT_ANIM;
+import static com.android.launcher3.util.MultiTranslateDelegate.INDEX_WIDGET_CENTERING;
 
-import android.animation.AnimatorSet;
-import android.animation.ObjectAnimator;
-import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Rect;
@@ -37,88 +31,72 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewDebug;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.launcher3.accessibility.DragAndDropAccessibilityDelegate;
 import com.android.launcher3.celllayout.CellLayoutLayoutParams;
-import com.android.launcher3.pageindicators.PageIndicatorDots;
-import com.android.launcher3.util.HorizontalInsettableView;
+import com.android.launcher3.celllayout.CellPosMapper;
+import com.android.launcher3.celllayout.CellPosMapper.CellPos;
+import com.android.launcher3.config.FeatureFlags;
 import com.android.launcher3.util.MultiPropertyFactory;
 import com.android.launcher3.util.MultiPropertyFactory.MultiProperty;
 import com.android.launcher3.util.MultiTranslateDelegate;
 import com.android.launcher3.util.MultiValueAlpha;
 import com.android.launcher3.views.ActivityContext;
+import com.android.launcher3.views.DoubleShadowBubbleTextView;
 
-import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-import app.lawnchair.hotseat.DisabledHotseat;
-import app.lawnchair.hotseat.HotseatMode;
-import app.lawnchair.hotseat.HotseatPagedView;
-import app.lawnchair.hotseat.LawnchairHotseat;
 import app.lawnchair.preferences.PreferenceManager;
 import app.lawnchair.preferences2.PreferenceCacheExtensionsKt;
 import app.lawnchair.preferences2.PreferenceManager2;
 
 /**
- * View class that represents the bottom dock of the home screen.
- * Hosts a {@link app.lawnchair.hotseat.HotseatPagedView} of icon grids plus an optional QSB.
+ * View class that represents the hotseat (aka. the dock)
  */
 public class Hotseat extends FrameLayout implements Insettable {
 
-    public static final int ALPHA_CHANNEL_TASKBAR_ALIGNMENT = 0;
-    public static final int ALPHA_CHANNEL_PREVIEW_RENDERER = 1;
-    public static final int ALPHA_CHANNEL_TASKBAR_STASH = 2;
-    public static final int ALPHA_CHANNEL_ASSISTANT_VISIBILITY = 3;
-    public static final int ALPHA_CHANNEL_CHANNELS_COUNT = 4;
+    // Ratio of hotseat height to transfer to workspace if needed to match design specs
+    public static final float WORKSPACE_TO_HOTSEAT_HEIGHT_RATIO = 0.44f;
 
-    @Retention(RetentionPolicy.RUNTIME)
-    @IntDef({ALPHA_CHANNEL_TASKBAR_ALIGNMENT, ALPHA_CHANNEL_PREVIEW_RENDERER,
-            ALPHA_CHANNEL_TASKBAR_STASH, ALPHA_CHANNEL_ASSISTANT_VISIBILITY})
-    public @interface HotseatQsbAlphaId {
-    }
+    // Translation property for hotseat icons
+    public static final int ICONS_TRANSLATION_X_EXTRA_PINS = 0;
+    public static final int ICONS_TRANSLATION_X_NAV_BAR_ANIM = 1;
+    public static final int ICONS_TRANSLATION_X_HOTSEAT_PINS = 2;
+    public static final int ICONS_TRANSLATION_X_SPLIT = 3;
+    private static final int ICONS_TRANSLATION_X_CHANNELS_COUNT = 4;
 
-    public static final int ICONS_TRANSLATION_X_NAV_BAR_ALIGNMENT = 0;
-    public static final int ICONS_TRANSLATION_X_CHANNELS_COUNT = 1;
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({ICONS_TRANSLATION_X_EXTRA_PINS, ICONS_TRANSLATION_X_NAV_BAR_ANIM,
+            ICONS_TRANSLATION_X_HOTSEAT_PINS, ICONS_TRANSLATION_X_SPLIT})
+    public @interface IconsTranslationX {}
 
-    @Retention(RetentionPolicy.RUNTIME)
-    @IntDef({ICONS_TRANSLATION_X_NAV_BAR_ALIGNMENT})
-    public @interface IconsTranslationX {
-    }
-
-    // Ratio of empty space, qsb should take up to appear visually centered.
-    public static final float QSB_CENTER_FACTOR = .325f;
-    private static final int BUBBLE_BAR_ADJUSTMENT_ANIMATION_DURATION_MS = 250;
-    private static final int DOCK_PAGE_INDICATOR_HEIGHT_DP = 8;
-
-    @ViewDebug.ExportedProperty(category = "launcher")
-    private boolean mHasVerticalHotseat;
-    private Workspace<?> mWorkspace;
-    private boolean mSendTouchToWorkspace;
-    private boolean mSendTouchToPager;
-    private final MultiValueAlpha mIconsAlphaChannels;
-    private final MultiValueAlpha mQsbAlphaChannels;
-
-    private @Nullable MultiProperty mQsbTranslationX;
-
-    private final MultiPropertyFactory mIconsTranslationXFactory;
-
-    private final View mQsb;
-    private final FrameLayout mIconsContainer;
-    private final HotseatPagedView mPagedView;
-    private final PageIndicatorDots mPageIndicator;
-    private final int mPageIndicatorHeight;
+    // Alpha channel for QSB
+    public static final int QSB_ALPHA_OF_WORKSPACE_SCALE = 0;
+    private static final int ALPHA_CHANNEL_CHANNELS_COUNT = 1;
 
     private final ActivityContext mActivity;
 
-    PreferenceManager2 preferenceManager2;
-    PreferenceManager preferenceManager;
+    private boolean mHasVerticalHotseat;
+    private Workspace<?> mWorkspace;
+    private boolean mSendClicksToWorkspace;
+
+    private final View mQsb;
+    private final View mIconsContainer;
+
+    private final MultiPropertyFactory<View> mIconsTranslationXFactory;
+    private @Nullable MultiTranslateDelegate mQsbTranslationX;
+    private final MultiValueAlpha mQsbAlphaChannels;
+
+    private PreferenceManager preferenceManager;
+    private PreferenceManager2 preferenceManager2;
 
     public Hotseat(Context context) {
         this(context, null);
@@ -131,62 +109,17 @@ public class Hotseat extends FrameLayout implements Insettable {
     public Hotseat(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
         mActivity = ActivityContext.lookupContext(context);
+        mHasVerticalHotseat = mActivity.getDeviceProfile().isVerticalBarLayout();
 
-        preferenceManager2 = PreferenceManager2.getInstance(context);
         preferenceManager = PreferenceManager.getInstance(context);
-        HotseatMode hotseatMode = PreferenceCacheExtensionsKt.firstCached(preferenceManager2.getHotseatMode());
-        var hotseatEnabled = PreferenceCacheExtensionsKt.firstCached(preferenceManager2.isHotseatEnabled());
+        preferenceManager2 = PreferenceManager2.getInstance(context);
 
-        if (!hotseatEnabled) {
-            hotseatMode = DisabledHotseat.INSTANCE;
-        }
-
-        if (!hotseatMode.isAvailable(context)) {
-            // The current hotseat mode is not available,
-            // setting the hotseat mode to one that is always available
-            hotseatMode = LawnchairHotseat.INSTANCE;
-            com.patrykmichalik.opto.core.PreferenceExtensionsKt.setBlocking(preferenceManager2.getHotseatMode(), hotseatMode);
-        }
-        int layoutId = hotseatMode.getLayoutResourceId();
-
-        mIconsContainer = new FrameLayout(context);
-        mIconsContainer.setLayoutParams(new LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        mIconsContainer.setClipChildren(false);
-        mIconsContainer.setClipToPadding(false);
+        mQsb = LayoutInflater.from(context).inflate(preferenceManager2.getHotseatMode().get().getLayoutResourceId(), this, false);
+        addView(mQsb);
+        mIconsContainer = LayoutInflater.from(context).inflate(R.layout.hotseat_icons_container, this, false);
         addView(mIconsContainer);
 
-        mPagedView = new HotseatPagedView(context);
-        mPagedView.setLayoutParams(new LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        mIconsContainer.addView(mPagedView);
-
-        mPageIndicatorHeight = Math.round(
-                DOCK_PAGE_INDICATOR_HEIGHT_DP * getResources().getDisplayMetrics().density);
-        mPageIndicator = new PageIndicatorDots(context);
-        LayoutParams indicatorLp = new LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, mPageIndicatorHeight);
-        indicatorLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        mPageIndicator.setLayoutParams(indicatorLp);
-        mPageIndicator.setVisibility(GONE);
-        mIconsContainer.addView(mPageIndicator);
-        mPagedView.setPageIndicator(mPageIndicator);
-
-        if (Flags.enableQsbOnHotseat()) {
-            mQsb = LayoutInflater.from(context).inflate(R.layout.qsb_container_hotseat, this,
-                    false);
-        } else {
-            mQsb = LayoutInflater.from(context).inflate(layoutId, this,
-                    false);
-        }
-
-        addView(mQsb);
-
-        // Create an initial page so alpha/translation channels have a target during construction.
-        mPagedView.resetPages(false, null, mActivity.getDeviceProfile());
-
-        mIconsAlphaChannels = new MultiValueAlpha(mIconsContainer, ALPHA_CHANNEL_CHANNELS_COUNT);
-        mIconsAlphaChannels.setUpdateVisibility(true);
+        // Sets the delegate for the Qsb translation X in case it is reorderable.
         if (mQsb instanceof Reorderable qsbReorderable) {
             mQsbTranslationX = qsbReorderable.getTranslateDelegate()
                     .getTranslationX(MultiTranslateDelegate.INDEX_NAV_BAR_ANIM);
@@ -202,26 +135,64 @@ public class Hotseat extends FrameLayout implements Insettable {
     }
 
     private void setUpBackground() {
-        if(!preferenceManager.getHotseatBG().get()) return;
+        var displayMetrics = getResources().getDisplayMetrics();
+        float density = displayMetrics.density;
 
-        var bgColor = PreferenceCacheExtensionsKt.firstCached(preferenceManager2.getHotseatBackgroundColor());
-        var transparency = preferenceManager.getHotseatBGAlpha().get();
-        var alphaValue = (transparency * 255) / 100;
-        var baseColor = bgColor.getColorPreferenceEntry().getLightColor().invoke(getContext());
-        var finalColor = Color.argb(alphaValue, Color.red(baseColor), Color.green(baseColor), Color.blue(baseColor));
+        // iOS floating dock margins (dp to px)
         int insetHorizontalLeft = preferenceManager.getHotseatBGHorizontalInsetLeft().get();
+        if (insetHorizontalLeft <= 0) {
+            insetHorizontalLeft = (int) (18 * density);
+        }
         int insetHorizontalRight = preferenceManager.getHotseatBGHorizontalInsetRight().get();
+        if (insetHorizontalRight <= 0) {
+            insetHorizontalRight = (int) (18 * density);
+        }
         int insetVerticalTop = preferenceManager.getHotseatBGVerticalInsetTop().get();
+        if (insetVerticalTop <= 0) {
+            insetVerticalTop = (int) (6 * density);
+        }
         int insetVerticalBottom = preferenceManager.getHotseatBGVerticalInsetBottom().get();
+        if (insetVerticalBottom <= 0) {
+            insetVerticalBottom = (int) (14 * density);
+        }
+
+        // iOS rounded squircle pill corner radius (28dp)
         float cornerRadiusDp = PreferenceCacheExtensionsKt.firstCached(
                 preferenceManager2.getHotseatBackgroundCornerRadius());
+        if (cornerRadiusDp < 24f) {
+            cornerRadiusDp = 28f;
+        }
         float cornerRadius = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP,
                 cornerRadiusDp,
-                getResources().getDisplayMetrics());
+                displayMetrics);
+
+        // iOS Frosted Glass effect: semi-transparent with adaptive light/dark mode
+        boolean isDark = (getResources().getConfiguration().uiMode 
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK) 
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+
+        int transparency = preferenceManager.getHotseatBGAlpha().get();
+        if (transparency >= 100 || transparency <= 0) {
+            transparency = isDark ? 40 : 45;
+        }
+        int alphaValue = (transparency * 255) / 100;
+
+        int finalColor = isDark 
+                ? Color.argb(alphaValue, 45, 45, 48) 
+                : Color.argb(alphaValue, 245, 245, 250);
+
         GradientDrawable background = new GradientDrawable();
         background.setColor(finalColor);
         background.setCornerRadius(cornerRadius);
+
+        // Subtle iOS frosted glass outline border
+        int strokeWidth = Math.max(1, (int) (1 * density));
+        int strokeColor = isDark 
+                ? Color.argb(40, 255, 255, 255) 
+                : Color.argb(80, 255, 255, 255);
+        background.setStroke(strokeWidth, strokeColor);
+
         InsetDrawable bg = new InsetDrawable(background,
                 insetHorizontalLeft, insetVerticalTop, insetHorizontalRight, insetVerticalBottom);
         setBackground(bg);
@@ -238,423 +209,112 @@ public class Hotseat extends FrameLayout implements Insettable {
         return mQsbTranslationX;
     }
 
-    public HotseatPagedView getPagedView() {
-        return mPagedView;
-    }
-
-    /** Returns the CellLayout for the given dock page. */
-    @Nullable
-    public CellLayout getPageAt(int page) {
-        return mPagedView.getPageAt(page);
-    }
-
-    /** Returns the currently visible dock page layout. */
-    @Nullable
-    public CellLayout getCurrentPageLayout() {
-        return mPagedView.getCurrentCellLayout();
-    }
-
-    /** Returns all dock page layouts. */
-    public CellLayout[] getPageLayouts() {
-        int count = mPagedView.getPageCount();
-        CellLayout[] pages = new CellLayout[count];
-        for (int i = 0; i < count; i++) {
-            pages[i] = mPagedView.getPageAt(i);
-        }
-        return pages;
-    }
-
-    /** Whether {@code layout} is one of this hotseat's page CellLayouts. */
-    public boolean isHotseatPage(View layout) {
-        if (!(layout instanceof CellLayout)) {
-            return false;
-        }
-        return layout.getParent() == mPagedView;
+    /** Provides alpha property for hotseat Qsb. */
+    public MultiValueAlpha.AlphaProperty getQsbAlpha() {
+        return mQsbAlphaChannels.getProperty(QSB_ALPHA_OF_WORKSPACE_SCALE);
     }
 
     /**
-     * Returns orientation specific cell X given invariant order in the hotseat
+     * Sets whether the workspace is in multi-window mode.
      */
-    public int getCellXFromOrder(int rank) {
-        if (mHasVerticalHotseat) {
-            return 0;
-        }
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        int numColumns = dp.numShownHotseatIcons;
-        int localRank = getLocalRank(rank, dp);
-        return localRank % numColumns;
+    public void setMultiWindowMode(boolean isMultiWindow) {
+        mIconsTranslationXFactory.get(INDEX_BUBBLE_ADJUSTMENT_ANIM).setValue(0);
+        mIconsTranslationXFactory.get(INDEX_WIDGET_CENTERING).setValue(0);
     }
 
     /**
-     * Returns orientation specific cell Y given invariant order in the hotseat
+     * Returns whether the hotseat is vertical.
      */
-    public int getCellYFromOrder(int rank) {
-        if (mHasVerticalHotseat) {
-            CellLayout page = getCurrentPageLayout();
-            int countY = page != null ? page.getCountY() : mActivity.getDeviceProfile().numShownHotseatIcons;
-            return countY - (rank + 1);
-        }
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        int numColumns = dp.numShownHotseatIcons;
-        int localRank = getLocalRank(rank, dp);
-        return localRank / numColumns;
-    }
-
-    /** Returns the dock page index for a global hotseat rank. */
-    public int getPageFromOrder(int rank) {
-        if (mHasVerticalHotseat) {
-            return 0;
-        }
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        int slotsPerPage = Math.max(1, dp.numShownHotseatIcons * dp.numHotseatRows);
-        return rank / slotsPerPage;
-    }
-
-    private static int getLocalRank(int rank, DeviceProfile dp) {
-        int slotsPerPage = Math.max(1, dp.numShownHotseatIcons * dp.numHotseatRows);
-        return rank % slotsPerPage;
-    }
-
-    boolean isHasVerticalHotseat() {
+    public boolean isVertical() {
         return mHasVerticalHotseat;
     }
 
-    public void resetLayout(boolean hasVerticalHotseat) {
-        ActivityContext activityContext = ActivityContext.lookupContext(getContext());
-        boolean bubbleBarEnabled = activityContext.isBubbleBarEnabled();
-        boolean hasBubbles = activityContext.hasBubbles();
-        mHasVerticalHotseat = hasVerticalHotseat;
-        DeviceProfile dp = mActivity.getDeviceProfile();
-
-        mPagedView.resetPages(hasVerticalHotseat, mWorkspace, dp);
-
-        if (bubbleBarEnabled) {
-            for (CellLayout page : getPageLayouts()) {
-                if (dp.shouldAdjustHotseatForBubbleBar(getContext(), hasBubbles)) {
-                    page.getShortcutsAndWidgets().setTranslationProvider(
-                            cellX -> dp.getHotseatAdjustedTranslation(getContext(), cellX));
-                } else {
-                    page.getShortcutsAndWidgets().setTranslationProvider(null);
-                }
-            }
-            if (mQsb instanceof HorizontalInsettableView) {
-                HorizontalInsettableView insettableQsb = (HorizontalInsettableView) mQsb;
-                if (dp.shouldAdjustHotseatForBubbleBar(getContext(), hasBubbles)) {
-                    final float insetFraction = (float) dp.iconSizePx / dp.hotseatQsbWidth;
-                    mQsb.post(() -> insettableQsb.setHorizontalInsets(insetFraction));
-                } else {
-                    insettableQsb.setHorizontalInsets(0);
-                }
-            }
-        }
+    /**
+     * Sets the workspace for the hotseat.
+     */
+    public void setWorkspace(Workspace<?> workspace) {
+        mWorkspace = workspace;
     }
 
     /**
-     * Adjust the hotseat icons for the bubble bar.
+     * Sets whether the hotseat should send clicks to the workspace.
      */
-    public void adjustForBubbleBar(boolean isBubbleBarVisible) {
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        boolean shouldAdjust = isBubbleBarVisible
-                && dp.shouldAdjustHotseatOrQsbForBubbleBar(getContext());
-        boolean shouldAdjustHotseat = shouldAdjust
-                && dp.shouldAlignBubbleBarWithHotseat();
-        AnimatorSet animatorSet = new AnimatorSet();
-        for (CellLayout page : getPageLayouts()) {
-            ShortcutAndWidgetContainer icons = page.getShortcutsAndWidgets();
-            if (shouldAdjustHotseat) {
-                icons.setTranslationProvider(
-                        cellX -> dp.getHotseatAdjustedTranslation(getContext(), cellX));
-            } else {
-                icons.setTranslationProvider(null);
-            }
-            for (int i = 0; i < icons.getChildCount(); i++) {
-                View child = icons.getChildAt(i);
-                if (child.getLayoutParams() instanceof CellLayoutLayoutParams lp) {
-                    float tx = shouldAdjustHotseat
-                            ? dp.getHotseatAdjustedTranslation(getContext(), lp.getCellX()) : 0;
-                    if (child instanceof Reorderable) {
-                        MultiTranslateDelegate mtd = ((Reorderable) child).getTranslateDelegate();
-                        animatorSet.play(
-                                mtd.getTranslationX(INDEX_BUBBLE_ADJUSTMENT_ANIM).animateToValue(tx));
-                    } else {
-                        animatorSet.play(ObjectAnimator.ofFloat(child, VIEW_TRANSLATE_X, tx));
-                    }
-                }
-            }
-        }
-        boolean shouldAdjustQsb =
-                shouldAdjustHotseat || (shouldAdjust && dp.shouldAlignBubbleBarWithQSB());
-        if (mQsb instanceof HorizontalInsettableView horizontalInsettableQsb) {
-            final float currentInsetFraction = horizontalInsettableQsb.getHorizontalInsets();
-            final float targetInsetFraction = shouldAdjustQsb
-                    ? (float) dp.iconSizePx / dp.hotseatQsbWidth : 0;
-            ValueAnimator qsbAnimator =
-                    ValueAnimator.ofFloat(currentInsetFraction, targetInsetFraction);
-            qsbAnimator.addUpdateListener(animation -> {
-                float insetFraction = (float) animation.getAnimatedValue();
-                horizontalInsettableQsb.setHorizontalInsets(insetFraction);
-            });
-            animatorSet.play(qsbAnimator);
-        }
-        animatorSet.setDuration(BUBBLE_BAR_ADJUSTMENT_ANIMATION_DURATION_MS).start();
-    }
-
-    @Override
-    public void setInsets(Rect insets) {
-        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) getLayoutParams();
-        DeviceProfile grid = mActivity.getDeviceProfile();
-
-        if (grid.isVerticalBarLayout()) {
-            mQsb.setVisibility(View.GONE);
-            mPageIndicator.setVisibility(GONE);
-            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
-            if (grid.isSeascape()) {
-                lp.gravity = Gravity.LEFT;
-                lp.width = grid.hotseatBarSizePx + insets.left;
-            } else {
-                lp.gravity = Gravity.RIGHT;
-                lp.width = grid.hotseatBarSizePx + insets.right;
-            }
-        } else {
-            mQsb.setVisibility(View.VISIBLE);
-            lp.gravity = Gravity.BOTTOM;
-            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
-            lp.height = grid.hotseatBarSizePx;
-        }
-
-        Rect padding = grid.getHotseatLayoutPadding(getContext());
-        setPadding(padding.left, padding.top, padding.right, padding.bottom);
-        setLayoutParams(lp);
-        InsettableFrameLayout.dispatchInsets(this, insets);
-    }
-
-    public void setWorkspace(Workspace<?> w) {
-        mWorkspace = w;
-        for (CellLayout page : getPageLayouts()) {
-            page.setCellLayoutContainer(w);
-        }
-    }
-
-    private boolean isTouchOnQsb(MotionEvent ev) {
-        if (mQsb == null || mQsb.getVisibility() != VISIBLE) {
-            return false;
-        }
-        float x = ev.getX();
-        float y = ev.getY();
-        return x >= mQsb.getLeft() && x < mQsb.getRight()
-                && y >= mQsb.getTop() && y < mQsb.getBottom();
-    }
-
-    private MotionEvent obtainPagerEvent(MotionEvent ev) {
-        MotionEvent pagerEv = MotionEvent.obtain(ev);
-        pagerEv.offsetLocation(-mIconsContainer.getLeft() - mPagedView.getLeft(),
-                -mIconsContainer.getTop() - mPagedView.getTop());
-        return pagerEv;
+    public void setSendClicksToWorkspace(boolean sendClicksToWorkspace) {
+        mSendClicksToWorkspace = sendClicksToWorkspace;
     }
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
-        int yThreshold = getMeasuredHeight() - getPaddingBottom();
-        if (ev.getY() > yThreshold || isTouchOnQsb(ev)) {
+        // We don't want any clicks to go through to the workspace unless specified.
+        if (!mSendClicksToWorkspace) {
             return false;
         }
-
-        // Multi-page dock: own the icon-band stream and dispatch it to the pager so empty
-        // pages can still scroll (same pattern as single-page workspace forwarding).
-        if (mPagedView.isPagingEnabled()) {
-            final int action = ev.getAction() & MotionEvent.ACTION_MASK;
-            if (action == MotionEvent.ACTION_DOWN) {
-                mSendTouchToPager = true;
-                mSendTouchToWorkspace = false;
-            }
-            return mSendTouchToPager;
-        }
-
-        // Single-page dock: forward horizontal swipes to workspace.
-        if (mWorkspace != null) {
-            mSendTouchToWorkspace = mWorkspace.onInterceptTouchEvent(ev);
-            return mSendTouchToWorkspace;
-        }
-        return false;
+        // Send the clicks to the workspace.
+        return mWorkspace != null && mWorkspace.onInterceptTouchEvent(ev);
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (mSendTouchToPager) {
-            MotionEvent pagerEv = obtainPagerEvent(event);
-            boolean handled = mPagedView.dispatchTouchEvent(pagerEv);
-            pagerEv.recycle();
-            final int action = event.getAction() & MotionEvent.ACTION_MASK;
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                mSendTouchToPager = false;
-            }
-            return handled;
+        // We don't want any clicks to go through to the workspace unless specified.
+        if (!mSendClicksToWorkspace) {
+            return false;
         }
-        if (mSendTouchToWorkspace) {
-            final int action = event.getAction();
-            switch (action & MotionEvent.ACTION_MASK) {
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    mSendTouchToWorkspace = false;
-            }
-            return mWorkspace.onTouchEvent(event);
-        }
-        return false;
-    }
-
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int widthSize = MeasureSpec.getSize(widthMeasureSpec);
-        int heightSize = MeasureSpec.getSize(heightMeasureSpec);
-        setMeasuredDimension(widthSize, heightSize);
-
-        int paddingLeft = getPaddingLeft();
-        int paddingRight = getPaddingRight();
-        int paddingTop = getPaddingTop();
-        int paddingBottom = getPaddingBottom();
-
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        boolean showIndicator = mPagedView.isPagingEnabled() && !dp.isVerticalBarLayout();
-        int indicatorSpace = showIndicator ? mPageIndicatorHeight : 0;
-
-        int pagerWidth = widthSize - paddingLeft - paddingRight;
-        int pagerHeight = heightSize - paddingTop - paddingBottom;
-        mIconsContainer.measure(
-                makeMeasureSpec(Math.max(0, pagerWidth), MeasureSpec.EXACTLY),
-                makeMeasureSpec(Math.max(0, pagerHeight), MeasureSpec.EXACTLY));
-
-        int pageHeight = Math.max(0, pagerHeight - indicatorSpace);
-        mPagedView.measure(
-                makeMeasureSpec(Math.max(0, pagerWidth), MeasureSpec.EXACTLY),
-                makeMeasureSpec(pageHeight, MeasureSpec.EXACTLY));
-
-        if (showIndicator) {
-            mPageIndicator.measure(
-                    makeMeasureSpec(Math.max(0, pagerWidth), MeasureSpec.EXACTLY),
-                    makeMeasureSpec(mPageIndicatorHeight, MeasureSpec.EXACTLY));
-        }
-
-        int width;
-        if (dp.isQsbInline) {
-            width = dp.hotseatQsbWidth;
-        } else {
-            width = mPagedView.getMeasuredWidth();
-        }
-
-        mQsb.measure(makeMeasureSpec(Math.max(0, width), MeasureSpec.EXACTLY),
-                makeMeasureSpec(dp.getHotseatProfile().getQsbHeight(), MeasureSpec.EXACTLY));
-    }
-
-    @Override
-    protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        int width = r - l;
-        int height = b - t;
-        int paddingLeft = getPaddingLeft();
-        int paddingRight = getPaddingRight();
-        int paddingTop = getPaddingTop();
-        int paddingBottom = getPaddingBottom();
-
-        DeviceProfile dp = mActivity.getDeviceProfile();
-        mIconsContainer.layout(paddingLeft, paddingTop, width - paddingRight,
-                height - paddingBottom);
-
-        int containerWidth = mIconsContainer.getWidth();
-        int containerHeight = mIconsContainer.getHeight();
-        boolean showIndicator = mPagedView.isPagingEnabled() && !dp.isVerticalBarLayout();
-        int indicatorSpace = showIndicator ? mPageIndicatorHeight : 0;
-
-        mPagedView.layout(0, 0, containerWidth, Math.max(0, containerHeight - indicatorSpace));
-
-        if (showIndicator) {
-            int indicatorTop = containerHeight - mPageIndicatorHeight;
-            mPageIndicator.layout(0, indicatorTop, containerWidth,
-                    indicatorTop + mPageIndicatorHeight);
-            mPageIndicator.setVisibility(VISIBLE);
-        } else {
-            mPageIndicator.setVisibility(GONE);
-        }
-
-        int qsbMeasuredWidth = mQsb.getMeasuredWidth();
-        int left;
-        if (dp.isQsbInline) {
-            int qsbSpace = dp.hotseatBorderSpace;
-            left = Utilities.isRtl(getResources()) ? r - getPaddingRight() + qsbSpace
-                    : l + getPaddingLeft() - qsbMeasuredWidth - qsbSpace;
-        } else {
-            left = (width - qsbMeasuredWidth) / 2;
-        }
-        int right = left + qsbMeasuredWidth;
-
-        int bottom = height - dp.getQsbOffsetY();
-        int top = bottom - dp.getHotseatProfile().getQsbHeight();
-        mQsb.layout(left, top, right, bottom);
+        // Send the clicks to the workspace.
+        return mWorkspace != null && mWorkspace.onTouchEvent(event);
     }
 
     /**
-     * Sets the alpha value of the specified alpha channel of just our ShortcutAndWidgetContainer.
+     * Sets the accessibility delegate for the hotseat icons.
      */
-    public void setIconsAlpha(float alpha, @HotseatQsbAlphaId int channelId) {
-        getIconsAlpha(channelId).setValue(alpha);
+    public void setDragAndDropAccessibilityDelegate(
+            DragAndDropAccessibilityDelegate accessibilityDelegate) {
+        // Implementation can delegate to child views if needed
     }
 
     /**
-     * Sets the alpha value of just our QSB.
+     * Sets the insets for the hotseat.
      */
-    public void setQsbAlpha(float alpha, @HotseatQsbAlphaId int channelId) {
-        getQsbAlpha(channelId).setValue(alpha);
-    }
+    @Override
+    public void setInsets(Rect insets) {
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) getLayoutParams();
+        DeviceProfile dp = mActivity.getDeviceProfile();
 
-    /** Returns the alpha channel for ShortcutAndWidgetContainer */
-    public MultiProperty getIconsAlpha(@HotseatQsbAlphaId int channelId) {
-        return mIconsAlphaChannels.get(channelId);
-    }
+        if (dp.isVerticalBarLayout()) {
+            mHasVerticalHotseat = true;
+            lp.gravity = dp.isSeascape() ? Gravity.LEFT : Gravity.RIGHT;
+            lp.width = dp.hotseatBarSizePx + insets.left + insets.right;
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+            setPadding(insets.left, insets.top, insets.right, insets.bottom);
+        } else {
+            mHasVerticalHotseat = false;
+            lp.gravity = Gravity.BOTTOM;
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            lp.height = dp.hotseatBarSizePx + insets.bottom;
+            setPadding(insets.left, 0, insets.right, insets.bottom);
+        }
+        setLayoutParams(lp);
 
-    /** Returns the alpha channel for Qsb */
-    public MultiProperty getQsbAlpha(@HotseatQsbAlphaId int channelId) {
-        return mQsbAlphaChannels.get(channelId);
+        InsettableFrameLayout.dispatchInsets(this, insets);
     }
 
     /**
-     * Returns the QSB inside hotseat
+     * Returns the QSB view.
      */
     public View getQsb() {
         return mQsb;
     }
 
-    /** Delegates to the current page's shortcuts container. */
-    @Nullable
-    public ShortcutAndWidgetContainer getShortcutsAndWidgets() {
-        CellLayout page = getCurrentPageLayout();
-        return page != null ? page.getShortcutsAndWidgets() : null;
+    /**
+     * Returns the icons container view.
+     */
+    public View getIconsContainer() {
+        return mIconsContainer;
     }
 
-    /** Delegates accessibility drag helper to the current page. */
-    @Nullable
-    public DragAndDropAccessibilityDelegate getDragAndDropAccessibilityDelegate() {
-        CellLayout page = getCurrentPageLayout();
-        return page != null ? page.getDragAndDropAccessibilityDelegate() : null;
+    /**
+     * Resets the layout.
+     */
+    public void resetLayout(boolean isHotseatHorizontal) {
+        // Reset subviews if needed
     }
-
-    /** Dumps the Hotseat internal state */
-    public void dump(String prefix, PrintWriter writer) {
-        writer.println(prefix + "Hotseat:");
-        writer.println(prefix + "\tpages: " + mPagedView.getPageCount()
-                + " pagingEnabled=" + mPagedView.isPagingEnabled());
-        mIconsAlphaChannels.dump(
-                prefix + "\t",
-                writer,
-                "mIconsAlphaChannels",
-                "ALPHA_CHANNEL_TASKBAR_ALIGNMENT",
-                "ALPHA_CHANNEL_PREVIEW_RENDERER",
-                "ALPHA_CHANNEL_TASKBAR_STASH");
-        mQsbAlphaChannels.dump(
-                prefix + "\t",
-                writer,
-                "mQsbAlphaChannels",
-                "ALPHA_CHANNEL_TASKBAR_ALIGNMENT",
-                "ALPHA_CHANNEL_PREVIEW_RENDERER",
-                "ALPHA_CHANNEL_TASKBAR_STASH"
-        );
-    }
-
 }
