@@ -18,370 +18,250 @@ package app.lawnchair.preferences
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.core.content.edit
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import app.lawnchair.font.FontCache
-import com.android.launcher3.InvariantDeviceProfile
-import com.android.launcher3.LauncherPrefs
-import java.util.concurrent.CopyOnWriteArraySet
-import org.json.JSONObject
+import app.lawnchair.MSDLPlayer
+import app.lawnchair.feedback.FeedbackLevel
+import app.lawnchair.util.getApkVersionComparison
+import app.lawnchair.util.isGestureNavContractCompatible
+import app.lawnchair.util.isOnePlusStock
+import com.android.launcher3.BuildConfig
+import com.android.launcher3.InvariantDeviceProfile.INDEX_DEFAULT
+import com.android.launcher3.InvariantDeviceProfile.INDEX_TWO_PANEL_PORTRAIT
+import com.android.launcher3.R
+import com.android.launcher3.Utilities
+import com.android.launcher3.model.DeviceGridState
+import com.android.launcher3.util.ComponentKey
+import com.android.launcher3.util.DaggerSingletonObject
+import com.android.launcher3.util.SafeCloseable
+import com.patrykkobylarz.lawnchair.dagger.LauncherAppComponent
+import javax.inject.Inject
 
-sealed class BasePreferenceManager(private val context: Context) : SharedPreferences.OnSharedPreferenceChangeListener {
-    val sp: SharedPreferences = LauncherPrefs.getPrefs(context)
-    val prefsMap = mutableMapOf<String, BasePref<*>>()
+class PreferenceManager @Inject constructor(
+    private val context: Context,
+) : BasePreferenceManager(context),
+    SafeCloseable,
+    SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private var changedPrefs: MutableSet<BasePref<*>>? = null
-    private var editor: SharedPreferences.Editor? = null
-    private var inBatchMode = false
-        set(value) {
-            if (field != value) {
-                if (field) {
-                    editor!!.apply()
-                    editor = null
-                    val tmp = changedPrefs?.let { HashSet(it) }
-                    changedPrefs = null
-                    if (tmp != null) {
-                        tmp.forEach { it.invalidate() }
-                        tmp.forEach { it.onSharedPreferenceChange() }
-                    }
-                }
-                field = value
-                if (field) {
-                    editor = sp.edit()
-                    changedPrefs = mutableSetOf()
-                }
-            }
-        }
-    private var activeBatchCount = 0
-        set(value) {
-            field = value
-            inBatchMode = value > 0
-        }
+    private val reloadIcons = { idp.onPreferencesChanged(context) }
+    private val reloadGrid = { idp.onPreferencesChanged(context) }
+    private val recreate = { context.recreateIfNotScheduled() }
 
-    fun migratePrefs(currentVersion: Int, block: (oldVersion: Int) -> Unit) {
-        val oldVersion = sp.getInt("version", 9999)
-        block(oldVersion)
-        sp.edit {
-            putInt("version", currentVersion)
-        }
-    }
+    val iconPackPackage = StringPref("pref_iconPackPackage", "", reloadIcons)
+    val hiddenAppSet = StringSetPref("pref_hidden_app_set", Collections.emptySet())
+    val hiddenFolderAppSet = StringSetPref("pref_hidden_folder_app_set", Collections.emptySet())
+    val isItemDragEnabled = BoolPref("pref_isItemDragEnabled", true)
+    val iconSizeFactor = FloatPref("pref_iconSizeFactor", 1f, reloadIcons)
+    val textSizeFactor = FloatPref("pref_textSizeFactor", 1f, reloadGrid)
 
-    override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
-        val pref = prefsMap[key] ?: return
-        val changedSet = changedPrefs
-        if (changedSet != null) {
-            changedSet.add(pref)
-        } else {
-            pref.invalidate()
-            pref.onSharedPreferenceChange()
-        }
-    }
+    val workspaceColumns = IdpIntPref("pref_workspaceColumns", { numColumns }, reloadGrid)
+    val workspaceRows = IdpIntPref("pref_workspaceRows", { numRows }, reloadGrid)
+    val hotseatColumns = IdpIntPref("pref_hotseatColumns", { numDatabaseHotseatIcons }, reloadGrid)
 
-    fun batchEdit(block: () -> Unit) {
-        try {
-            activeBatchCount++
-            block()
-        } finally {
-            activeBatchCount--
-        }
-    }
-
-    private inline fun editSp(crossinline block: SharedPreferences.Editor.() -> Unit) {
-        if (inBatchMode) {
-            block(editor!!)
-        } else {
-            sp.edit { block(this) }
-        }
-    }
-
-    abstract inner class BasePref<T>(override val key: String, private val primaryListener: ChangeListener?) : PrefEntry<T> {
-        protected var loaded = false
-        private val listeners = CopyOnWriteArraySet<PreferenceChangeListener>()
-
-        fun invalidate() {
-            loaded = false
-        }
-
-        fun onSharedPreferenceChange() {
-            loaded = false
-            primaryListener?.invoke()
-            listeners.forEach { listener ->
-                listener.onPreferenceChange()
-            }
-        }
-
-        override fun addListener(listener: PreferenceChangeListener) {
-            listeners.add(listener)
-        }
-
-        override fun removeListener(listener: PreferenceChangeListener) {
-            listeners.remove(listener)
-        }
-    }
-
-    abstract inner class StringBasedPref<T>(
-        key: String,
-        override val defaultValue: T,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<T>(key, primaryListener) {
-        private var currentValue: T? = null
-
-        init {
-            @Suppress("LeakingThis")
-            prefsMap[key] = this
-        }
-
-        @Suppress("UNCHECKED_CAST")
-        override fun get(): T {
-            if (!loaded) {
-                currentValue = if (sp.contains(key)) {
-                    parse(sp.getString(key, null)!!)
-                } else {
-                    defaultValue
-                }
-                loaded = true
-            }
-            return currentValue as T
-        }
-
-        override fun set(newValue: T) {
-            currentValue = newValue
-            editSp { putString(key, stringify(newValue)) }
-        }
-
-        protected abstract fun parse(stringValue: String): T
-        protected abstract fun stringify(value: T): String
-    }
-
-    inner class StringPref(
-        key: String,
-        defaultValue: String,
-        primaryListener: ChangeListener? = null,
-    ) : StringBasedPref<String>(key, defaultValue, primaryListener) {
-        override fun parse(stringValue: String) = stringValue
-        override fun stringify(value: String) = value
-    }
-
-    inner class BoolPref(
-        key: String,
-        override val defaultValue: Boolean,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<Boolean>(key, primaryListener) {
-        private var currentValue = false
-
-        init {
-            prefsMap[key] = this
-        }
-
-        override fun get(): Boolean {
-            if (!loaded) {
-                currentValue = sp.getBoolean(key, defaultValue)
-                loaded = true
-            }
-            return currentValue
-        }
-
-        override fun set(newValue: Boolean) {
-            currentValue = newValue
-            editSp { putBoolean(key, newValue) }
-        }
-    }
-
-    open inner class IntPref(
-        key: String,
-        private val defaultValueInternal: Int,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<Int>(key, primaryListener) {
-        override val defaultValue = defaultValueInternal
-        private var currentValue = 0
-
-        init {
-            @Suppress("LeakingThis")
-            prefsMap[key] = this
-        }
-
-        override fun get(): Int {
-            if (!loaded) {
-                currentValue = try {
-                    sp.getInt(key, defaultValueInternal)
-                } catch (_: ClassCastException) {
-                    sp.getFloat(key, defaultValueInternal.toFloat()).toInt()
-                }
-                loaded = true
-            }
-            return currentValue
-        }
-
-        override fun set(newValue: Int) {
-            currentValue = newValue
-            editSp { putInt(key, newValue) }
-        }
-    }
-
-    inner class IdpIntPref(
-        key: String,
-        private val selectDefaultValue: InvariantDeviceProfile.GridOption.() -> Int,
-        primaryListener: ChangeListener? = null,
-    ) : IntPref(key, -1, primaryListener) {
-        override val defaultValue: Int
-            get() = error("unsupported")
-
-        override fun get(): Int {
-            error("unsupported")
-        }
-
-        override fun set(newValue: Int) {
-            error("unsupported")
-        }
-
-        fun defaultValue(defaultGrid: InvariantDeviceProfile.GridOption): Int {
-            return selectDefaultValue(defaultGrid)
-        }
-
-        fun get(defaultGrid: InvariantDeviceProfile.GridOption): Int {
-            val value = super.get()
-            return if (value == -1) {
-                selectDefaultValue(defaultGrid)
+    val workspaceColumnsUnfolded = IdpIntPref(
+        "pref_workspaceColumns_unfolded",
+        {
+            if (context.resources.getBoolean(R.bool.allow_rotation)) {
+                numColumns
             } else {
-                value
+                numColumns * 2
             }
-        }
-
-        fun set(newValue: Int, defaultGrid: InvariantDeviceProfile.GridOption) {
-            if (newValue == selectDefaultValue(defaultGrid)) {
-                super.set(-1)
+        },
+        reloadGrid,
+    )
+    val workspaceRowsUnfolded = IdpIntPref(
+        "pref_workspaceRows_unfolded",
+        {
+            if (context.resources.getBoolean(R.bool.allow_rotation)) {
+                numRows
             } else {
-                super.set(newValue)
+                numRows / 2
             }
-        }
-    }
-
-    inner class FloatPref(
-        key: String,
-        override val defaultValue: Float,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<Float>(key, primaryListener) {
-        private var currentValue = 0f
-
-        init {
-            prefsMap[key] = this
-        }
-
-        override fun get(): Float {
-            if (!loaded) {
-                currentValue = sp.getFloat(key, defaultValue)
-                loaded = true
-            }
-            return currentValue
-        }
-
-        override fun set(newValue: Float) {
-            currentValue = newValue
-            editSp { putFloat(key, newValue) }
-        }
-    }
-
-    inner class StringSetPref(
-        key: String,
-        override val defaultValue: Set<String>,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<Set<String>>(key, primaryListener) {
-        private var currentValue = setOf<String>()
-
-        init {
-            prefsMap[key] = this
-        }
-
-        override fun get(): Set<String> {
-            if (!loaded) {
-                currentValue = sp.getStringSet(key, defaultValue)!!
-                loaded = true
-            }
-            return currentValue
-        }
-
-        override fun set(newValue: Set<String>) {
-            currentValue = newValue
-            editSp { putStringSet(key, newValue) }
-        }
-    }
-
-    inner class FontPref(
-        key: String,
-        defaultValue: FontCache.Font,
-        primaryListener: ChangeListener? = null,
-    ) : StringBasedPref<FontCache.Font>(key, defaultValue, primaryListener) {
-
-        override fun parse(stringValue: String): FontCache.Font = runCatching {
-            FontCache.Font.fromJsonString(context, stringValue)
-        }.getOrDefault(defaultValue)
-
-        override fun stringify(value: FontCache.Font) = value.toJsonString()
-    }
-
-    inner class ObjectPref<T>(
-        key: String,
-        defaultValue: T,
-        private val parseFunc: (stringValue: String) -> T,
-        private val stringifyFunc: (value: T) -> String,
-        primaryListener: ChangeListener? = null,
-    ) : StringBasedPref<T>(key, defaultValue, primaryListener) {
-
-        override fun parse(stringValue: String) = parseFunc(stringValue)
-
-        override fun stringify(value: T) = stringifyFunc(value)
-    }
-
-    abstract inner class MutableMapPref<K, V>(
-        key: String,
-        primaryListener: ChangeListener? = null,
-    ) : BasePref<Map<K, V>>(key, primaryListener) {
-
-        override val defaultValue = mapOf<K, V>()
-        private val valueMap = mutableMapOf<K, V>()
-
-        init {
-            val obj = JSONObject(sp.getString(key, "{}")!!)
-            obj.keys().forEach {
-                valueMap[unflattenKey(it)] = unflattenValue(obj.getString(it))
-            }
-            @Suppress("LeakingThis")
-            prefsMap[key] = this
-        }
-
-        override fun get() = HashMap(valueMap)
-
-        override fun set(newValue: Map<K, V>) {
-            throw NotImplementedError()
-        }
-
-        open fun flattenKey(key: K) = key.toString()
-        abstract fun unflattenKey(key: String): K
-
-        open fun flattenValue(value: V) = value.toString()
-        abstract fun unflattenValue(value: String): V
-
-        operator fun set(key: K, value: V?) {
-            if (value != null) {
-                valueMap[key] = value
+        },
+        reloadGrid,
+    )
+    val hotseatColumnsUnfolded = IdpIntPref(
+        "pref_hotseatColumns_unfolded",
+        {
+            if (context.resources.getBoolean(R.bool.allow_rotation)) {
+                numDatabaseHotseatIcons
             } else {
-                valueMap.remove(key)
+                numDatabaseHotseatIcons * 2
             }
-            saveChanges()
-        }
+        },
+        reloadGrid,
+    )
 
-        private fun saveChanges() {
-            val obj = JSONObject()
-            valueMap.entries.forEach { obj.put(flattenKey(it.key), flattenValue(it.value)) }
-            editSp { putString(key, obj.toString()) }
-        }
+    val folderColumns = IdpIntPref("pref_folderColumns", { numFolderColumns[INDEX_DEFAULT] }, reloadGrid)
+    val folderColumnsTwoPanelPortrait = IdpIntPref("pref_folderColumns_two_panel_portrait", { numFolderColumns[INDEX_TWO_PANEL_PORTRAIT] }, reloadGrid)
 
-        operator fun get(key: K): V? {
-            return valueMap[key]
-        }
+    val workspaceIncreaseMaxGridSize = BoolPref("pref_workspace_increase_max_grid_size", false)
+    val folderRows = IdpIntPref("pref_folderRows", { numFolderRows[INDEX_DEFAULT] }, reloadGrid)
+    val drawerOpacity = FloatPref("pref_drawerOpacity", .5f, recreate)
+    val coloredBackgroundLightness = FloatPref("pref_coloredBackgroundLightness", 1F)
+    val feedProvider = StringPref("pref_feedProvider", "")
+    val ignoreFeedWhitelist = BoolPref("pref_ignoreFeedWhitelist", false)
+    val launcherTheme = StringPref("pref_launcherTheme", "system")
+    val overrideWindowCornerRadius = BoolPref("pref_overrideWindowCornerRadius", false, recreate)
+    val windowCornerRadius = IntPref("pref_windowCornerRadius", 80, recreate)
+    val autoLaunchRoot = BoolPref("pref_autoLaunchRoot", false)
+    val wallpaperScrolling = BoolPref("pref_wallpaperScrolling", true)
+    val infiniteScrolling = BoolPref("pref_infiniteScrolling", false)
+    val enableDebugMenu = BoolPref("pref_enableDebugMenu", false)
 
-        fun clear() {
-            valueMap.clear()
-            saveChanges()
+    val vibrationFeedbackLevel: IntPref = IntPref(
+        "pref_vibrationFeedbackLevel",
+        FeedbackLevel.DEFAULT.ordinal,
+    ) {
+        normalizeVibrationFeedbackLevel()
+    }
+
+    val customAppName = object : MutableMapPref<ComponentKey, String>("pref_appNameMap", reloadGrid) {
+        override fun flattenKey(key: ComponentKey) = key.toString()
+        override fun unflattenKey(key: String) = ComponentKey.fromString(key)!!
+        override fun flattenValue(value: String) = value
+        override fun unflattenValue(value: String) = value
+    }
+
+    val recentActionOrder = StringPref("pref_recentActionOrder", "0,1,2,3,4", recreate)
+
+    private val fontCache = FontCache.INSTANCE.get(context)
+    val fontWorkspace = FontPref("pref_workspaceFont", fontCache.uiText, recreate)
+    val fontHeading = FontPref("pref_fontHeading", fontCache.uiRegular, recreate)
+    val fontHeadingMedium = FontPref("pref_fontHeadingMedium", fontCache.uiMedium, recreate)
+    val fontBody = FontPref("pref_fontBody", fontCache.uiText, recreate)
+    val fontBodyMedium = FontPref("pref_fontBodyMedium", fontCache.uiTextMedium, recreate)
+
+    // TODO REMOVE
+    val deviceSearch = BoolPref("device_search", false, recreate)
+    val searchResultShortcuts = BoolPref("pref_searchResultShortcuts", false)
+    val searchResultPeople = BoolPref("pref_searchResultPeople", false, recreate)
+    val searchResultPixelTips = BoolPref("pref_searchResultPixelTips", false)
+    val searchResultSettings = BoolPref("pref_searchResultSettings", false)
+    val searchResultCalculator = BoolPref("pref_searchResultCalculator", false)
+    val searchResultApps = BoolPref("pref_searchResultApps", true, recreate)
+    val searchResultFilesToggle = BoolPref("pref_searchResultFiles", false, recreate)
+    val searchResultAllFiles = BoolPref("pref_searchResultAllFiles", false, recreate)
+    val searchResultAudio = BoolPref("pref_searchResultAudio", false, recreate)
+    val searchResultVisualMedia = BoolPref("pref_searchResultVisualMedia", false, recreate)
+    val searchResultStartPageSuggestion = BoolPref("pref_searchResultStartPageSuggestion", true, recreate)
+    val searchResultSettingsEntry = BoolPref("pref_searchResultSettingsEntry", false, recreate)
+    val searchResulRecentSuggestion = BoolPref("pref_searchResultRecentSuggestion", false, recreate)
+
+    val themedIcons = BoolPref("themed_icons", false, reloadIcons)
+    val drawerThemedIcons = BoolPref("drawer_themed_icons", false, reloadIcons)
+
+    val hotseatQsbCornerRadius = FloatPref("pref_hotseatQsbCornerRadius", 1F, recreate)
+    val hotseatQsbAlpha = IntPref("pref_searchHotseatTranparency", 100, recreate)
+    val hotseatQsbStrokeWidth = FloatPref("pref_searchStrokeWidth", 0F, recreate)
+    val hotseatBG = BoolPref("pref_hotseatBG", true, recreate)
+    val hotseatBGHorizontalInsetLeft = IntPref("pref_hotseatBGHRinsetLeft", 45, recreate)
+    val hotseatBGVerticalInsetTop = IntPref("pref_hotseatBGVRinsetTop", 10, recreate)
+    val hotseatBGHorizontalInsetRight = IntPref("pref_hotseatBGHRinsetRight", 45, recreate)
+    val hotseatBGVerticalInsetBottom = IntPref("pref_hotseatBGVRinsetBottom", 25, recreate)
+
+    val hotseatBGAlpha = IntPref("pref_hotseatBGTransparency", 45, recreate)
+
+    val enableWallpaperBlur = BoolPref("pref_enableWallpaperBlur", false, recreate)
+    val wallpaperBlur = IntPref("pref_wallpaperBlur", 25, recreate)
+    val wallpaperBlurFactorThreshold = FloatPref("pref_wallpaperBlurFactor", 3.0F, recreate)
+
+    val drawerList = BoolPref("pref_drawerList", true, recreate)
+    val folderApps = BoolPref("pref_hideFolderApps", true, reloadGrid)
+
+    val recentsActionScreenshot = BoolPref("pref_recentsActionScreenshot", !isOnePlusStock)
+    val recentsActionShare = BoolPref("pref_recentsActionShare", isOnePlusStock)
+    val recentsActionLens = BoolPref("pref_recentsActionLens", true)
+    val recentsActionClearAll = BoolPref("pref_clearAllAsAction", false)
+    val recentsActionLocked = BoolPref("pref_lockedAsAction", false)
+
+    val recentsTranslucentBackground = BoolPref("pref_recentsTranslucentBackground", false, recreate)
+    val recentsTranslucentBackgroundAlpha = FloatPref("pref_recentTranslucentBackgroundAlpha", .8f, recreate)
+
+    val hideVersionInfo = BoolPref("pref_hideVersionInfo", false)
+    val pseudonymVersion = StringPref("pref_pseudonymVersion", "Bubble Tea")
+
+    val enableGnc = BoolPref("pref_enableGnc", isGestureNavContractCompatible, recreate)
+    val hasOpenedSettings = BoolPref("pref_hasOpenedSettings", false)
+
+    val lawnchairMajorVersion = IntPref(
+        "pref_lawnchairMajorVersion",
+        context.getApkVersionComparison().first[0],
+    )
+
+    val forceIconMonochrome = BoolPref("pref_forceIconMonochrome", false)
+
+    override fun close() {
+        TODO("Not yet implemented")
+    }
+
+    private fun normalizeVibrationFeedbackLevel() {
+        val storedLevel = vibrationFeedbackLevel.get()
+        val normalizedLevel = storedLevel.toFeedbackLevel().ordinal
+        if (storedLevel != normalizedLevel) {
+            vibrationFeedbackLevel.set(normalizedLevel)
         }
+        MSDLPlayer.SYSTEM_FEEDBACK_LEVEL = FeedbackLevel.entries[normalizedLevel]
+    }
+
+    init {
+        sp.registerOnSharedPreferenceChangeListener(this)
+        migratePrefs(CURRENT_VERSION) { oldVersion ->
+            if (oldVersion < 2) {
+                val gridState = DeviceGridState(context).toProtoMessage()
+                if (gridState.hotseatCount != -1) {
+                    val colsAndRows = gridState.gridSize.split(",")
+                    workspaceColumns.set(colsAndRows[0].toInt())
+                    workspaceRows.set(colsAndRows[1].toInt())
+                    hotseatColumns.set(gridState.hotseatCount)
+                }
+            }
+        }
+        normalizeVibrationFeedbackLevel()
+    }
+
+    companion object {
+        private const val CURRENT_VERSION = 2
+
+        @JvmField
+        val INSTANCE = DaggerSingletonObject(LauncherAppComponent::getPreferenceManager)
+
+        @JvmStatic
+        fun getInstance(context: Context) = INSTANCE.get(context)!!
     }
 }
+
+private fun Int.toFeedbackLevel() = FeedbackLevel.entries.getOrNull(this) ?: FeedbackLevel.DEFAULT
+
+@Composable
+fun preferenceManager() = PreferenceManager.getInstance(LocalContext.current)
+
+/**
+ * Grid layout configuration for a device's workspace.
+ *
+ * @param hotseatColumns The amount of column the dock can contain
+ * @param workspaceColumns The amount of column the home screen can contain
+ * @param workspaceRows The amount of row the home screen can contain
+ * @param hotseatColumnsUnfolded The amount of column the dock can contain when unfolded (foldables only)
+ */
+data class LayoutConfig(
+    /**
+     * Hotseat columns refer to the amount of column the dock can contain.
+     * For foldables, this is the folded (closed) state.
+     */
+    val hotseatColumns: Int,
+    /**
+     * Workspace columns refer to the amount of column the home screen can contain.
+     */
+    val workspaceColumns: Int,
+    /**
+     * Workspace rows refer to the amount of row the home screen can contain.
+     */
+    val workspaceRows: Int,
+    /**
+     * Hotseat columns when the foldable is in unfolded (opened) state.
+     * For non-foldable devices, this must be equals to [hotseatColumns].
+     */
+    val hotseatColumnsUnfolded: Int = hotseatColumns,
+)
