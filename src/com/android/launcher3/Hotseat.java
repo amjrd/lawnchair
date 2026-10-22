@@ -52,7 +52,6 @@ import app.lawnchair.qsb.QsbLayout;
 import app.lawnchair.qsb.QsbView;
 import app.lawnchair.qsb.SmartSpaceView;
 import app.lawnchair.preferences.PreferenceManager2;
-import app.lawnchair.preferences2.PreferenceManager2;
 import app.lawnchair.hotseat.DisabledHotseat;
 import app.lawnchair.hotseat.HotseatMode;
 import app.lawnchair.hotseat.InsettablePagedView;
@@ -99,7 +98,6 @@ public class Hotseat extends FrameLayout implements Insettable,
     private final MultiValueAlpha mIconsAlpha;
 
     private PreferenceManager2 preferenceManager;
-    private PreferenceManager2 preferenceManager2;
 
     public Hotseat(Context context) {
         this(context, null);
@@ -115,7 +113,6 @@ public class Hotseat extends FrameLayout implements Insettable,
         mHasVerticalHotseat = false;
 
         preferenceManager = PreferenceManager2.getInstance(context);
-        preferenceManager2 = PreferenceManager2.getInstance(context);
 
         mQsb = LayoutInflater.from(context).inflate(preferenceManager.getHotseatMode().get().getLayoutResourceId(), this, false);
         addView(mQsb);
@@ -156,7 +153,7 @@ public class Hotseat extends FrameLayout implements Insettable,
             insetVerticalBottom = (int) (14 * density);
         }
 
-        float cornerRadiusDp = preferenceManager2.getHotseatBgBackgroundCornerRadius().get();
+        float cornerRadiusDp = preferenceManager.getHotseatBgBackgroundCornerRadius().get();
         int cornerRadius = 24;
         if (cornerRadiusDp < 24) {
             cornerRadius = (int) cornerRadiusDp;
@@ -215,11 +212,6 @@ public class Hotseat extends FrameLayout implements Insettable,
     }
 
     @Override
-    public void setзмеWorkspace(Workspace<?> workspace) {
-        mWorkspace = workspace;
-    }
-
-    @Override
     public void setWorkspace(Workspace<?> workspace) {
         mWorkspace = workspace;
         getHotseatPagedView().setWorkspace(workspace);
@@ -263,7 +255,7 @@ public class Hotseat extends FrameLayout implements Insettable,
     public void setDragAndDropAccessibilityDelegate(
             DragAndDropAccessibilityDelegate accessibilityDelegate) {
         if (accessibilityDelegate instanceof Insettable) {
-            ((Insettable) accessibilityDelegate).setInsets(this, insets);
+            ((Insettable) accessibilityDelegate).setInsets(this, new Rect());
         }
     }
 
@@ -276,8 +268,8 @@ public class Hotseat extends FrameLayout implements Insettable,
     private void alignPageIndicator() {
         if (mPageIndicator != null && mPageIndicator.getVisibility() == VISIBLE) {
             DeviceProfile dp = mActivity.getDeviceProfile();
-            int pageIndicatorHeight = (int) (dp.getPageIndicatorSize() * preferenceManager2.getPageIndicatorHeightFactor().get());
-            int paddingBottom = doHotseatPadding(getContext()).bottom;
+            int pageIndicatorHeight = (int) (dp.getPageIndicatorSize() * preferenceManager.getPageIndicatorHeightFactor().get());
+            int paddingBottom = getPaddingBottom();
             int y = getMeasuredHeight() - pageIndicatorHeight - paddingBottom;
 
             mPageIndicator.layout(
