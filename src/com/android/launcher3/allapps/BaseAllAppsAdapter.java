@@ -42,22 +42,28 @@ public abstract class BaseAllAppsAdapter<T extends Context & ActivityContext> ex
 
     public static final String TAG = "BaseAllAppsAdapter";
 
+    // A normal icon
     public static final int VIEW_TYPE_ICON = 1 << 1;
-    public static final int VIEW_TYPE_MASK_ICON = VIEW_TYPE_ICON;
-
+    // The message shown when there are no filtered results
     public static final int VIEW_TYPE_EMPTY_SEARCH = 1 << 2;
+    // A divider that separates the sections
     public static final int VIEW_TYPE_ALL_APPS_DIVIDER = 1 << 3;
 
     public static final int VIEW_TYPE_WORK_EDU_CARD = 1 << 4;
     public static final int VIEW_TYPE_WORK_DISABLED_CARD = 1 << 5;
     public static final int VIEW_TYPE_PRIVATE_SPACE_HEADER = 1 << 6;
     public static final int VIEW_TYPE_PRIVATE_SPACE_SYS_APPS_DIVIDER = 1 << 7;
-    public static final int VIEW_TYPE_MASK_PRIVATE_SPACE_HEADER = VIEW_TYPE_PRIVATE_SPACE_HEADER;
 
+    public static final int VIEW_TYPE_BOTTOM_VIEW_TO_SCROLL_TO = 1 << 8;
+    public static final int VIEW_TYPE_FOLDER = 1 << 9;
+
+    public static final int NEXT_ID = 10;
+
+    // Common interface for items in the adapter
     public static final int VIEW_TYPE_MASK_DIVIDER = VIEW_TYPE_ALL_APPS_DIVIDER
             | VIEW_TYPE_PRIVATE_SPACE_SYS_APPS_DIVIDER;
-
-    public static final int NEXT_ID = 8;
+    public static final int VIEW_TYPE_MASK_ICON = VIEW_TYPE_ICON;
+    public static final int VIEW_TYPE_MASK_PRIVATE_SPACE_HEADER = VIEW_TYPE_PRIVATE_SPACE_HEADER;
 
     protected final AlphabeticalAppsList<T> mApps;
     protected final LayoutInflater mLayoutInflater;
@@ -124,17 +130,11 @@ public abstract class BaseAllAppsAdapter<T extends Context & ActivityContext> ex
             case VIEW_TYPE_PRIVATE_SPACE_HEADER:
                 return new ViewHolder(mLayoutInflater.inflate(
                         R.layout.private_space_header, parent, false));
-            case R.layout.all_apps_folder_icon:
-                FolderIcon folderIcon = (FolderIcon) mLayoutInflater.inflate(
-                        R.layout.all_apps_folder_icon, parent, false);
-                folderIcon.setTextVisibility(true);
-                folderIcon.getLayoutParams().height =
-                        mActivityContext.getDeviceProfile().getAllAppsProfile().getCellHeightPx();
-                setupAppCardBackground(folderIcon);
-                return new ViewHolder(folderIcon);
-            case R.layout.all_apps_card:
-                FrameLayout fl = new FrameLayout(parent.getContext());
-                fl.setLayoutParams(new ViewGroup.LayoutParams(
+            case VIEW_TYPE_BOTTOM_VIEW_TO_SCROLL_TO:
+                return new ViewHolder(new View(mActivityContext));
+            case VIEW_TYPE_FOLDER:
+                FrameLayout fl = new FrameLayout(mActivityContext);
+                fl.setLayoutParams(new RecyclerView.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         mActivityContext.getDeviceProfile().getAllAppsProfile().getCellHeightPx()));
                 return new ViewHolder(fl);
@@ -172,55 +172,64 @@ public abstract class BaseAllAppsAdapter<T extends Context & ActivityContext> ex
                                     privateProfileManager.getReadyToAnimate())
                                 && privateProfileManager.getCurrentState() == STATE_ENABLED
                                 ? 0 : 1);
+                        Log.d(TAG, "onBindViewHolder: "
+                                + "isPrivateSpaceItem: " + isPrivateSpaceItem
+                                + " isStateTransitioning: " + privateProfileManager.isStateTransitioning()
+                                + " isScrolling: " + privateProfileManager.isScrolling()
+                                + " readyToAnimate: " + privateProfileManager.getReadyToAnimate()
+                                + " currentState: " + privateProfileManager.getCurrentState()
+                                + " currentAlpha: " + icon.getAlpha());
+                    }
+                    if (privateProfileManager.getCurrentState() == STATE_DISABLED
+                            && isPrivateSpaceItem) {
+                        adapterItem.decorationInfo = null;
+                        icon.setVisibility(GONE);
                     }
                 }
-                setupAppCardBackground(icon);
                 break;
             }
             case VIEW_TYPE_EMPTY_SEARCH: {
-                TextView emptyView = (TextView) holder.itemView;
-                emptyView.setText(mApps.getEmptySearchText());
+                AppInfo info = mApps.getAdapterItems().get(position).itemInfo;
+                if (info != null) {
+                    ((TextView) holder.itemView).setText(mActivityContext.getString(
+                            R.string.all_apps_no_search_results, info.title));
+                }
                 break;
             }
-            case VIEW_TYPE_ALL_APPS_DIVIDER:
-                break;
-            case VIEW_TYPE_WORK_DISABLED_CARD:
-                ((WorkPausedCard) holder.itemView).getWorkDisabledCardController()
-                        .setWorkAppsPaused(mApps.getWorkProfileManager().isWorkModePaused());
-                break;
             case VIEW_TYPE_PRIVATE_SPACE_HEADER:
-                PrivateProfileManager privateProfileManager = mApps.getPrivateProfileManager();
-                if (privateProfileManager != null) {
-                    privateProfileManager.bindPrivateSpaceHeaderView(holder.itemView);
+                RelativeLayout psHeaderLayout = holder.itemView.findViewById(
+                        R.id.ps_header_layout);
+                mApps.getPrivateProfileManager().bindPrivateSpaceHeaderViewElements(psHeaderLayout);
+                AdapterItem adapterItem = mApps.getAdapterItems().get(position);
+                int roundRegions = ROUND_TOP_LEFT | ROUND_TOP_RIGHT;
+                if (mApps.getPrivateProfileManager().getCurrentState() == STATE_DISABLED) {
+                    roundRegions |= (ROUND_BOTTOM_LEFT | ROUND_BOTTOM_RIGHT);
                 }
+                adapterItem.decorationInfo =
+                        new SectionDecorationInfo(mActivityContext, roundRegions);
                 break;
             case VIEW_TYPE_PRIVATE_SPACE_SYS_APPS_DIVIDER:
-                PrivateProfileManager ppm = mApps.getPrivateProfileManager();
-                if (ppm != null) {
-                    ppm.bindPrivateSpaceSysAppsDivider(holder.itemView);
-                }
+                adapterItem = mApps.getAdapterItems().get(position);
+                adapterItem.decorationInfo =
+                        mApps.getPrivateProfileManager().getCurrentState() == STATE_DISABLED ? null
+                                : new SectionDecorationInfo(mActivityContext, ROUND_NOTHING);
                 break;
-            case R.layout.all_apps_folder_icon: {
-                AdapterItem adapterItem = mApps.getAdapterItems().get(position);
-                FolderIcon folderIcon = (FolderIcon) holder.itemView;
-                folderIcon.reset();
-                folderIcon.setTextVisibility(true);
-                folderIcon.applyFromFolderInfo((FolderInfo) adapterItem.itemInfo);
-                folderIcon.setOnFocusChangeListener(mIconFocusListener);
-                folderIcon.getLayoutParams().height =
-                        mActivityContext.getDeviceProfile().getAllAppsProfile().getCellHeightPx();
-                setupAppCardBackground(folderIcon);
+            case VIEW_TYPE_BOTTOM_VIEW_TO_SCROLL_TO:
+            case VIEW_TYPE_ALL_APPS_DIVIDER:
+            case VIEW_TYPE_WORK_DISABLED_CARD:
                 break;
-            }
-            case R.layout.all_apps_card: {
-                FrameLayout fl = (FrameLayout) holder.itemView;
-                fl.removeAllViews();
-                AdapterItem adapterItem = mApps.getAdapterItems().get(position);
-                if (adapterItem.composeView != null) {
-                    fl.addView(adapterItem.composeView);
-                }
+            case VIEW_TYPE_WORK_EDU_CARD:
+                ((WorkEduCard) holder.itemView).setPosition(position);
                 break;
-            }
+            case VIEW_TYPE_FOLDER:
+                FolderInfo folderInfo = mApps.getAdapterItems().get(position).folderInfo;
+                ViewGroup container = (ViewGroup) holder.itemView;
+                container.removeAllViews();
+                FolderIcon folderIcon = FolderIcon.inflateFolderAndIcon(
+                        R.layout.all_apps_folder_icon, mActivityContext, container, folderInfo);
+                folderIcon.setOnLongClickListener(mOnIconLongClickListener);
+                container.addView(folderIcon);
+                break;
             default:
                 if (mAdapterProvider.isViewSupported(holder.getItemViewType())) {
                     mAdapterProvider.onBindView(holder, position);
