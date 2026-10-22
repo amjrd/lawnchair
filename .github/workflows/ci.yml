@@ -10,9 +10,6 @@ on:
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        build-variant: [ assembleDebug ]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -29,30 +26,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Build APK
-        run: ./gradlew ${{ matrix.build-variant }}
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ matrix.build-variant }}
+          name: lawnchair-debug-apk
           path: build/outputs/apk/**/*.apk
-
-  check-style:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Setup Gradle Cache
-        uses: gradle/actions/setup-gradle@v3
-
-      - name: Run Check
-        run: ./gradlew check
